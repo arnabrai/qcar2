@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """
 SDV Camera Bridge Node - Threaded Version
-Each camera runs in its own thread for true 30fps
+Official Quanser QCar2 camera IDs (from documentation):
+  Right = 0, Rear = 1, Front = 2, Left = 3
+Resolution: 820x616 @ 80fps (best balance)
 """
 
 import rclpy
@@ -35,32 +37,54 @@ class CameraBridgeNode(Node):
             'right': self.create_publisher(Image, '/sdv/camera/right', qos),
         }
 
-        # Camera ID mapping: 0=right, 1=rear, 2=left, 3=front
-        cam_ids = {'front': '3', 'rear': '1', 'left': '2', 'right': '0'}
+        # Official Quanser QCar2 camera IDs from documentation
+        # Right=0, Rear=1, Front=2, Left=3
+        self.cam_ids = {
+            'front': '2',
+            'rear':  '1',
+            'left':  '3',
+            'right': '0',
+        }
+
+        # Resolution: 820x616 @ 80fps (best for autonomous driving)
+        self.CAM_WIDTH  = 820
+        self.CAM_HEIGHT = 616
+        self.CAM_FPS    = 80
 
         # Start one thread per camera
         self.running = True
-        for name, cam_id in cam_ids.items():
+        for name, cam_id in self.cam_ids.items():
             t = threading.Thread(
                 target=self.camera_thread,
                 args=(name, cam_id),
                 daemon=True
             )
             t.start()
-            self.get_logger().info(f'  ✅ Thread started for CSI {name} (id={cam_id})')
+            self.get_logger().info(f'  ✅ Thread started → CSI {name} (id={cam_id})')
 
-        self.get_logger().info('✅ Camera Bridge READY — 30fps per camera!')
+        self.get_logger().info('✅ Camera Bridge READY!')
+        self.get_logger().info(f'   Resolution: {self.CAM_WIDTH}x{self.CAM_HEIGHT} @ {self.CAM_FPS}fps')
+        self.get_logger().info('   Topics:')
+        self.get_logger().info('   /sdv/camera/front  → Front  (id=2)')
+        self.get_logger().info('   /sdv/camera/rear   → Rear   (id=1)')
+        self.get_logger().info('   /sdv/camera/left   → Left   (id=3)')
+        self.get_logger().info('   /sdv/camera/right  → Right  (id=0)')
 
     def camera_thread(self, name, cam_id):
-        """Each camera runs independently at 30fps."""
+        """Each camera runs independently in its own thread."""
         try:
-            cam = Camera2D(cameraId=cam_id, frameWidth=640, frameHeight=480, frameRate=30)
+            cam = Camera2D(
+                cameraId=cam_id,
+                frameWidth=self.CAM_WIDTH,
+                frameHeight=self.CAM_HEIGHT,
+                frameRate=self.CAM_FPS
+            )
         except Exception as e:
-            self.get_logger().error(f'Failed to open {name} camera: {e}')
+            self.get_logger().error(f'Failed to open {name} camera (id={cam_id}): {e}')
             return
 
-        pub = self.publishers[name]
-        rate = 1.0 / 30.0
+        pub  = self.publishers[name]
+        rate = 1.0 / self.CAM_FPS
 
         while self.running and rclpy.ok():
             t0 = time.time()
@@ -79,6 +103,7 @@ class CameraBridgeNode(Node):
             except Exception:
                 pass
 
+            # Sleep to maintain target fps
             elapsed = time.time() - t0
             sleep_t = rate - elapsed
             if sleep_t > 0:
@@ -88,7 +113,7 @@ class CameraBridgeNode(Node):
 
     def destroy_node(self):
         self.running = False
-        time.sleep(0.2)
+        time.sleep(0.3)
         super().destroy_node()
 
 
@@ -98,7 +123,7 @@ def main(args=None):
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:
-        node.get_logger().info('🛑 Shutting down...')
+        node.get_logger().info('🛑 Camera Bridge shutting down...')
     finally:
         node.destroy_node()
         rclpy.shutdown()
